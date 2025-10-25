@@ -1,7 +1,7 @@
 // app.js — ValkorAI (Browser/PWA, offline-fähig)
 // WebLLM laden (ES-Modul)
-- import * as webllm from "https://esm.run/web-llm";
-- window.webllm = webllm; // global verfügbar machen
+import * as webllm from "./vendor/web-llm.min.mjs";
+window.webllm = webllm;
 + // vorerst ohne externen Import – wir verdrahten das gleich lokal (vendor-Datei)
 + let webllm = null;
 
@@ -358,6 +358,7 @@ if (el.micBtn && "webkitSpeechRecognition" in window) {
 function toast(msg) {
   console.log("[Valkor]", msg);
 }
+
 
 
 
