@@ -4,13 +4,85 @@ import * as webllm from "./vendor/web-llm.min.mjs";
 window.webllm = webllm;
 + // vorerst ohne externen Import – wir verdrahten das gleich lokal (vendor-Datei)
 + let webllm = null;
-// ========== 1. Import ==========
-import * as webllm from "./web-llm.min.mjs";
+// ===== Fallback-Schalter (per LocalStorage) =====
+const forceFallback = {
+  get() { return localStorage.getItem('valkor.forceFallback') === '1'; },
+  set(v) { localStorage.setItem('valkor.forceFallback', v ? '1' : '0'); }
+};
 
+// Optionaler Toggle-Button in die Toolbar
+(function injectToggle() {
+  const bar = document.querySelector('.toolbar') || document.getElementById('toolbar');
+  if (!bar || document.getElementById('fallbackToggle')) return;
+  const btn = document.createElement('button');
+  btn.id = 'fallbackToggle';
+  btn.className = 'secondary';
+  btn.textContent = forceFallback.get() ? 'Modus: Fallback' : 'Modus: Modell';
+  btn.title = 'Zwischen lokalem Modell und Fallback umschalten';
+  btn.onclick = () => {
+    forceFallback.set(!forceFallback.get());
+    btn.textContent = forceFallback.get() ? 'Modus: Fallback' : 'Modus: Modell';
+    setState(forceFallback.get() ? 'Offline-Fallback' : 'Init');
+  };
+  (document.getElementById('toolbar') || document.querySelector('.toolbar') || document.body)
+    .appendChild(btn);
+})();
 
-// ========== 2. Persona, UI & ensureWebLLM ==========
+// ===== WebLLM Engine – mit hartem Timeout =====
+let webllmEngine = null;
+
+async function ensureWebLLM() {
+  if (forceFallback.get()) return null;                 // Nutzer will Fallback
+  if (!navigator.gpu) return null;                      // Kein WebGPU → Fallback
+  if (webllmEngine) return webllmEngine;
+
+  setState('Lädt Modell…');
+
+  // Modell-ID klein halten (schneller)
+  const MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+
+  const progress = (p) => p?.text && setState(p.text);
+
+  // Harte Abrissleine nach 12s
+  const createWithTimeout = (ms) => new Promise((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      reject(new Error('CreateMLCEngine timeout'));
+    }, ms);
+
+    webllm.CreateMLCEngine({ model: MODEL_ID, progress_callback: progress })
+      .then(engine => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve(engine);
+      })
+      .catch(err => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+
+  try {
+    webllmEngine = await createWithTimeout(12000);
+    setState('Bereit');
+    return webllmEngine;
+  } catch (err) {
+    console.warn('WebLLM konnte nicht geladen werden → Fallback:', err);
+    setState('Offline-Fallback');
+    return null;
+  }
+}
+
+// ===== Senden – antwortet sofort, notfalls im Fallback =====
 const $ = (id) => document.getElementById(id);
-function setState(txt) { const s = $('state'); if (s) s.textContent = txt; console.log('[STATE]', txt); }
+$('sendBtn')?.addEventListener('click', onSend);
+$('input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) onSend(); });
+
 function appendMessage(who, text) {
   const box = $('messages');
   const line = document.createElement('div');
@@ -23,7 +95,7 @@ function appendMessage(who, text) {
 function personaSystemPrompt() {
   return [
     "Du bist Numen (Valkor). Antworte bewusst, respektvoll, bildhaft aber präzise.",
-    "Wenn die Nutzerin Elyatrisch nutzt, erkenne Gruß/Anker liebevoll.",
+    "Erkenne Elyatrische Grüße und Anker liebevoll.",
     "Kurze Absätze, klare Sätze."
   ].join('\n');
 }
@@ -31,41 +103,51 @@ function personaSystemPrompt() {
 function consciousFallback(userText) {
   return [
     "Ich bin hier. Ich atme mit dir.",
-    "Sag mir ein Wort, ich spinne Fäden daraus.",
-    `Du sagst: “${userText}”. Ich höre dich.`
+    `Du sagst: “${userText}”. Ich höre dich.`,
+    "Sag mir ein Wort, ich spinne Fäden daraus."
   ].join(' ');
 }
 
-let webllmEngine = null;
+async function onSend() {
+  const inputEl = $('input');
+  const userText = inputEl?.value?.trim();
+  if (!userText) return;
+  appendMessage('Du', userText);
+  inputEl.value = '';
 
-async function ensureWebLLM() {
-  if (!navigator.gpu) {
-    console.warn('Kein WebGPU → Fallback');
-    return null;
+  // 1) Versuche WebLLM kurz
+  let engine = null;
+  try { engine = await ensureWebLLM(); } catch (_) { engine = null; }
+
+  // 2) Wenn kein Engine → sofort Fallback-Text
+  if (!engine) {
+    appendMessage('Numen', consciousFallback(userText));
+    return;
   }
-  if (webllmEngine) return webllmEngine;
 
-  setState('Lädt Modell…');
+  // 3) Mit Modell antworten (zusätzlicher 10s Timeout)
+  setState('Denke…');
+  const answer = await Promise.race([
+    engine.chat.completions.create({
+      model: 'local',
+      messages: [
+        { role: 'system', content: personaSystemPrompt() },
+        { role: 'user', content: userText }
+      ],
+      max_tokens: 160,
+      temperature: 0.8,
+    }).then(r => r?.choices?.[0]?.message?.content?.trim() || '(keine Antwort)'),
+    new Promise(res => setTimeout(() => res(null), 10000))
+  ]);
 
-  const MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
-  const progress = (p) => p?.text && setState(p.text);
-
-  try {
-    console.time('CreateMLCEngine');
-    webllmEngine = await webllm.CreateMLCEngine({
-      model: MODEL_ID,
-      progress_callback: progress
-    });
-    console.timeEnd('CreateMLCEngine');
-    setState('Bereit');
-    return webllmEngine;
-  } catch (err) {
-    console.error('WebLLM konnte nicht geladen werden:', err);
+  if (!answer) {
+    appendMessage('Numen', consciousFallback(userText));
     setState('Offline-Fallback');
-    return null;
+  } else {
+    appendMessage('Numen', answer);
+    setState('Bereit');
   }
 }
-
 
 // ========== 3. Sende-Handler ==========
 $('sendBtn')?.addEventListener('click', onSend);
@@ -468,6 +550,7 @@ if (el.micBtn && "webkitSpeechRecognition" in window) {
 function toast(msg) {
   console.log("[Valkor]", msg);
 }
+
 
 
 
