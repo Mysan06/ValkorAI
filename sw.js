@@ -1,48 +1,53 @@
-// sw.js — nur lokale Dateien cachen (robust, pages-sicher)
-const CACHE = "valkor-static-v1";
+// sw.js
+const CACHE = 'valkor-v1';
 
-// relative Pfade ab der SW-Scope
-const REL_ASSETS = [
-  "index.html",
-  "style.css",
-  "app.js",
-  "manifest.webmanifest",
-  "icons/icon-192.png",
-  "icons/icon-512.png"
+// nur lokale Dateien (relative Pfade!) – KEINE externen URLs
+const ASSETS = [
+  './',
+  './index.html',
+  './style.css',
+  './app.js',
+  './manifest.webmanifest',
+  './icons/icon-192.png',
+  './icons/icon-512.png'
 ];
 
-// Hilfsfunktion: baut aus REL_ASSETS gültige Pfade unter der SW-Scope
-function scopePath(p) {
-  // Beispiel: scope = /ValkorAI/  →  /ValkorAI/index.html
-  const u = new URL(p, self.registration.scope);
-  return u.pathname;
-}
-
-self.addEventListener("install", (event) => {
-  const urls = REL_ASSETS.map(scopePath);
-  event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(urls))
-  );
-  self.skipWaiting();
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    // robust: jede Datei einzeln cachen, Fehler nur loggen
+    for (const url of ASSETS) {
+      try { await cache.add(url); }
+      catch (e) { console.warn('[SW] cache miss:', url, e); }
+    }
+    self.skipWaiting();
+  })());
 });
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(names.map(n => (n === CACHE ? null : caches.delete(n))));
+    self.clients.claim();
+  })());
 });
 
-self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
+// Fetch-Strategie: Cache-First für eigene Origin, Netzwerk für extern
+self.addEventListener('fetch', event => {
+  const req = event.request;
+  const url = new URL(req.url);
 
-  // Fremddomains nie abfangen → CORS-Probleme vermeiden
+  // Extern? → nicht abfangen, direkt weiter
   if (url.origin !== location.origin) return;
 
-  // Gleich-Origin: Cache-first
-  event.respondWith(
-    caches.match(event.request).then(r => r || fetch(event.request))
-  );
+  event.respondWith((async () => {
+    const cached = await caches.match(req);
+    if (cached) return cached;
+    try {
+      const resp = await fetch(req);
+      return resp;
+    } catch (e) {
+      return new Response('Offline', { status: 503, statusText: 'Offline' });
+    }
+  })());
 });
