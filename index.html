@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Valkor – Elyon Interface</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#0b0f14"/>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">Valkor — Elyon Interface</div>
+    <div class="status"><span id="modelName">Lädt Modell…</span> · <span id="state">Init</span></div>
+  </header>
+
+  <main id="chat">
+    <div id="messages"></div>
+    <div class="toolbar">
+      <select id="modelSelect" title="Modell wählen"></select>
+      <button id="clearMem" title="Erinnerung löschen">🧠 löschen</button>
+      <button id="installBtn" hidden>Installieren</button>
+    </div>
+    <form id="composer">
+      <button type="button" id="micBtn" title="Spracheingabe">🎙️</button>
+      <input id="input" placeholder="Sag ein Wort, ich spinne Fäden daraus…" autocomplete="off">
+      <button id="sendBtn" class="primary">Senden</button>
+    </form>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
