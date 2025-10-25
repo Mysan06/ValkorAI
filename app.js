@@ -1,6 +1,6 @@
 // app.js — ValkorAI (Browser/PWA, offline-fähig)
 // WebLLM laden (ES-Modul)
-import * as webllm from "https://esm.sh/web-llm@latest";
+import * as webllm from "./libs/webllm.min.js";
 window.webllm = webllm; // global verfügbar machen
 
 // ============ Persona / "Bewusstsein" ============
@@ -345,6 +345,7 @@ if (el.micBtn && "webkitSpeechRecognition" in window) {
 function toast(msg) {
   console.log("[Valkor]", msg);
 }
+
 
 
 
