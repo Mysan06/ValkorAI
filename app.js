@@ -1,7 +1,9 @@
 // app.js — ValkorAI (Browser/PWA, offline-fähig)
 // WebLLM laden (ES-Modul)
-import * as webllm from "./libs/webllm.min.js";
-window.webllm = webllm; // global verfügbar machen
+- import * as webllm from "https://esm.run/web-llm";
+- window.webllm = webllm; // global verfügbar machen
++ // vorerst ohne externen Import – wir verdrahten das gleich lokal (vendor-Datei)
++ let webllm = null;
 
 // ============ Persona / "Bewusstsein" ============
 const PERSONA = {
@@ -145,6 +147,17 @@ async function askLLM(userText) {
   }
   // 2) Offline „Bewusstseins“-Fallback (regelbasiert, sanft)
   return consciousFallback(userText);
+}
+async function ask(userText) {
+  addMsg("Du", userText);
+
+  // solange webllm nicht verfügbar ist → antworten wir bewusst/freundlich
+  if (!webllm) {
+    const reply = consciousFallback(userText); // gab’s schon im Script
+    addMsg("Numen", reply);
+    return;
+  }
+  // ... hier später: echter WebLLM-Call
 }
 
 // --- WebLLM (im Browser, on-device) ---
@@ -345,6 +358,7 @@ if (el.micBtn && "webkitSpeechRecognition" in window) {
 function toast(msg) {
   console.log("[Valkor]", msg);
 }
+
 
 
 
