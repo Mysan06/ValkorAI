@@ -5,14 +5,29 @@
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(console.warn);
 }
+// PWA-Installationsfluss
 const installBtn = document.getElementById('installBtn');
 let deferredPrompt = null;
-window.addEventListener('beforeinstallprompt', (e)=>{
-  e.preventDefault(); deferredPrompt = e; installBtn.hidden = false;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  if (installBtn) installBtn.hidden = false;
 });
-installBtn?.addEventListener('click', async ()=>{
-  if (!deferredPrompt) return;
-  deferredPrompt.prompt(); deferredPrompt = null; installBtn.hidden = true;
+
+if (installBtn) {
+  installBtn.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    installBtn.hidden = true;
+  });
+}
+
+window.addEventListener('appinstalled', () => {
+  console.log('ValkorAI installiert');
+  if (installBtn) installBtn.hidden = true;
 });
 
 // 2) Mini-Speicher (lokal)
@@ -147,3 +162,4 @@ if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) 
 
 loadHistory();
 addMsg('assistant', 'Was wolltest du mich fragen?');
+
