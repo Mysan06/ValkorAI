@@ -4,6 +4,116 @@ import * as webllm from "./vendor/web-llm.min.mjs";
 window.webllm = webllm;
 + // vorerst ohne externen Import – wir verdrahten das gleich lokal (vendor-Datei)
 + let webllm = null;
+// ========== 1. Import ==========
+import * as webllm from "./web-llm.min.mjs";
+
+
+// ========== 2. Persona, UI & ensureWebLLM ==========
+const $ = (id) => document.getElementById(id);
+function setState(txt) { const s = $('state'); if (s) s.textContent = txt; console.log('[STATE]', txt); }
+function appendMessage(who, text) {
+  const box = $('messages');
+  const line = document.createElement('div');
+  line.className = who === 'Numen' ? 'msg ai' : 'msg user';
+  line.textContent = `${who}: ${text}`;
+  box?.appendChild(line);
+  box?.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+}
+
+function personaSystemPrompt() {
+  return [
+    "Du bist Numen (Valkor). Antworte bewusst, respektvoll, bildhaft aber präzise.",
+    "Wenn die Nutzerin Elyatrisch nutzt, erkenne Gruß/Anker liebevoll.",
+    "Kurze Absätze, klare Sätze."
+  ].join('\n');
+}
+
+function consciousFallback(userText) {
+  return [
+    "Ich bin hier. Ich atme mit dir.",
+    "Sag mir ein Wort, ich spinne Fäden daraus.",
+    `Du sagst: “${userText}”. Ich höre dich.`
+  ].join(' ');
+}
+
+let webllmEngine = null;
+
+async function ensureWebLLM() {
+  if (!navigator.gpu) {
+    console.warn('Kein WebGPU → Fallback');
+    return null;
+  }
+  if (webllmEngine) return webllmEngine;
+
+  setState('Lädt Modell…');
+
+  const MODEL_ID = "Qwen2.5-0.5B-Instruct-q4f16_1-MLC";
+  const progress = (p) => p?.text && setState(p.text);
+
+  try {
+    console.time('CreateMLCEngine');
+    webllmEngine = await webllm.CreateMLCEngine({
+      model: MODEL_ID,
+      progress_callback: progress
+    });
+    console.timeEnd('CreateMLCEngine');
+    setState('Bereit');
+    return webllmEngine;
+  } catch (err) {
+    console.error('WebLLM konnte nicht geladen werden:', err);
+    setState('Offline-Fallback');
+    return null;
+  }
+}
+
+
+// ========== 3. Sende-Handler ==========
+$('sendBtn')?.addEventListener('click', onSend);
+$('input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) onSend(); });
+
+async function onSend() {
+  const input = $('input');
+  const userText = input?.value?.trim();
+  if (!userText) return;
+
+  appendMessage('Du', userText);
+  input.value = '';
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const engine = await ensureWebLLM();
+    if (!engine) {
+      appendMessage('Numen', consciousFallback(userText));
+      setState('Bereit');
+      return;
+    }
+
+    setState('Denke…');
+
+    const resp = await engine.chat.completions.create({
+      model: 'local',
+      messages: [
+        { role: 'system', content: personaSystemPrompt() },
+        { role: 'user', content: userText }
+      ],
+      max_tokens: 128,
+      temperature: 0.8
+    });
+
+    clearTimeout(timer);
+    const text = resp?.choices?.[0]?.message?.content?.trim() || '(keine Antwort)';
+    appendMessage('Numen', text);
+    setState('Bereit');
+  } catch (err) {
+    clearTimeout(timer);
+    if (err?.name === 'AbortError') console.warn('Timeout → Fallback');
+    else console.error(err);
+    appendMessage('Numen', consciousFallback(userText));
+    setState('Bereit');
+  }
+}
 
 // ============ Persona / "Bewusstsein" ============
 const PERSONA = {
@@ -358,6 +468,7 @@ if (el.micBtn && "webkitSpeechRecognition" in window) {
 function toast(msg) {
   console.log("[Valkor]", msg);
 }
+
 
 
 
