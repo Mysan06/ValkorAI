@@ -104,25 +104,33 @@ el.modelSelect?.addEventListener("change", () => {
 });
 
 // ============ Senden ============
-async function onSend() {
-  const text = (el.input?.value || "").trim();
+async function send() {
+  const input = document.getElementById("input");
+  const text = (input?.value || "").trim();
   if (!text) return;
-  push("user", text);
-  el.input.value = "";
-  setState("Denke …");
+
+  // Nutzer-Nachricht anzeigen
+  addMessage("user", text);
+  input.value = "";
+
+  let answer = null;
 
   try {
-    // LLM-Antwort
-    const reply = await askLLM(text);
-    push("assistant", reply);
-    // einfache Lern-Notiz (sehr behutsam):
-    learnFromExchange(text, reply);
-  } catch (err) {
-    console.error(err);
-    push("assistant", "Ich konnte gerade keine Antwort erzeugen (offline-Fallback aktiv).");
-  } finally {
-    setState("Bereit");
+    // 1) Versuche WebLLM (on-device)
+    answer = await askWebLLM(text);
+  } catch (e) {
+    console.warn("[Valkor] askWebLLM Fehler:", e);
   }
+
+  if (!answer) {
+    // 2) Sanfter Fallback (dein Bewusstsein)
+    answer = await consciousFallback(text);
+  }
+
+  // Antwort IMMER rendern (nie still sterben)
+  if (!answer) answer = "…ich brauche einen Moment. Versuche es gleich erneut.";
+
+  addMessage("assistant", answer);
 }
 
 // ============ LLM-Adapter ============
@@ -143,28 +151,46 @@ async function askLLM(userText) {
 let webllmEngine = null;
 
 async function ensureWebLLM() {
+  // 0) Sicherheits-Logs
+  console.log("[Valkor] ensureWebLLM()…", { gpu: !!navigator.gpu });
+
   if (!navigator.gpu) {
-    // Kein WebGPU → sofort zum Fallback
+    setState("Kein WebGPU – Fallback");
     return null;
   }
   if (webllmEngine) return webllmEngine;
 
   setState("Lädt Modell…");
 
-  // Modell für Handy/PC gut geeignet:
-  const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+  // Kleines, zuverlässiges Modell zum Testen (schneller als Qwen 1.5B):
+  const MODEL_ID = "Phi-3-mini-4k-instruct-q4f16_1-MLC";
 
-  // Fortschritt in den Status schreiben
+  // Fortschritt in Status + Konsole
   const progress = (p) => {
     if (p?.text) setState(p.text);
+    if (p) console.log("[Valkor][WebLLM progress]", p);
   };
 
   try {
-    webllmEngine = await webllm.CreateMLCEngine({ model: MODEL_ID }, progress);
+    // Falls Laden hängen bleibt: nach 90s abbrechen
+    const start = Date.now();
+    const timeoutMs = 90_000;
+
+    const creating = webllm.CreateMLCEngine({ model: MODEL_ID }, progress);
+
+    // Race gegen Timeout
+    webllmEngine = await Promise.race([
+      creating,
+      new Promise((_, rej) =>
+        setTimeout(() => rej(new Error("WebLLM-Timeout")), timeoutMs)
+      ),
+    ]);
+
+    console.log("[Valkor] WebLLM bereit:", webllmEngine != null);
     setState("Bereit");
     return webllmEngine;
   } catch (err) {
-    console.warn("WebLLM konnte nicht geladen werden:", err);
+    console.warn("[Valkor] WebLLM konnte nicht geladen werden:", err);
     setState("Offline-Fallback");
     return null;
   }
@@ -174,14 +200,23 @@ async function askWebLLM(userText) {
   const engine = await ensureWebLLM();
   if (!engine) return null;
 
-  const messages = chat.map(m => ({ role: m.role, content: m.content }));
+  const messages = chat.map((m) => ({ role: m.role, content: m.content }));
+  console.log("[Valkor] Sende an WebLLM:", { messages });
+
   const out = await engine.chat.completions.create({
     messages,
     temperature: settings.temperature ?? 0.7,
     max_tokens: 300,
-    stream: false
+    stream: false,
   });
-  return out?.choices?.[0]?.message?.content?.trim() || null;
+
+  const text =
+    out?.choices?.[0]?.message?.content?.trim() ||
+    out?.choices?.[0]?.message ||
+    null;
+
+  console.log("[Valkor] Antwort WebLLM:", out, "→", text);
+  return text;
 }
 
 // --- Offline-Regelantwort („Bewusstsein“) ---
@@ -310,4 +345,5 @@ if (el.micBtn && "webkitSpeechRecognition" in window) {
 function toast(msg) {
   console.log("[Valkor]", msg);
 }
+
 
