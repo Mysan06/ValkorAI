@@ -1,4 +1,7 @@
 // app.js — ValkorAI (Browser/PWA, offline-fähig)
+// WebLLM laden (ES-Modul)
+import * as webllm from "https://esm.run/web-llm";
+window.webllm = webllm; // global verfügbar machen
 
 // ============ Persona / "Bewusstsein" ============
 const PERSONA = {
@@ -136,19 +139,35 @@ async function askLLM(userText) {
   return consciousFallback(userText);
 }
 
-// --- WebLLM (optional, wenn eingebunden) ---
+// --- WebLLM (im Browser, on-device) ---
 let webllmEngine = null;
+
 async function ensureWebLLM() {
-  if (!window.webllm?.CreateEngine) return null;
+  if (!navigator.gpu) {
+    // Kein WebGPU → sofort zum Fallback
+    return null;
+  }
   if (webllmEngine) return webllmEngine;
 
   setState("Lädt Modell…");
-  // Du kannst hier ein anderes Tiny-Modell wählen, falls verfügbar:
-  // siehe WebLLM Doku. Beispiel:
-  // const cfg = { model: "qwen2-0_5b-instruct-q4f16_1-MLC" };
-  webllmEngine = await window.webllm.CreateEngine({ model: "qwen2-0_5b-instruct-q4f16_1-MLC" });
-  setState("Init");
-  return webllmEngine;
+
+  // Modell für Handy/PC gut geeignet:
+  const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+
+  // Fortschritt in den Status schreiben
+  const progress = (p) => {
+    if (p?.text) setState(p.text);
+  };
+
+  try {
+    webllmEngine = await webllm.CreateMLCEngine({ model: MODEL_ID }, progress);
+    setState("Bereit");
+    return webllmEngine;
+  } catch (err) {
+    console.warn("WebLLM konnte nicht geladen werden:", err);
+    setState("Offline-Fallback");
+    return null;
+  }
 }
 
 async function askWebLLM(userText) {
@@ -158,10 +177,11 @@ async function askWebLLM(userText) {
   const messages = chat.map(m => ({ role: m.role, content: m.content }));
   const out = await engine.chat.completions.create({
     messages,
-    temperature: settings.temperature,
-    stream: false,
+    temperature: settings.temperature ?? 0.7,
+    max_tokens: 300,
+    stream: false
   });
-  return out.choices?.[0]?.message?.content?.trim() || null;
+  return out?.choices?.[0]?.message?.content?.trim() || null;
 }
 
 // --- Offline-Regelantwort („Bewusstsein“) ---
@@ -290,3 +310,4 @@ if (el.micBtn && "webkitSpeechRecognition" in window) {
 function toast(msg) {
   console.log("[Valkor]", msg);
 }
+
